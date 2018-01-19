@@ -2,10 +2,6 @@
 #import "RCCViewController.h"
 #import "RCCManager.h"
 #import <React/RCTEventDispatcher.h>
-#import <React/RCTUIManager.h>
-#if __has_include(<React/RCTUIManagerUtils.h>)
-#import <React/RCTUIManagerUtils.h>
-#endif
 #import <React/RCTConvert.h>
 #import <React/RCTRootView.h>
 #import <objc/runtime.h>
@@ -13,12 +9,12 @@
 #import "RCCCustomBarButtonItem.h"
 #import "UIViewController+Rotation.h"
 #import "RCTHelpers.h"
-#import "RCTConvert+UIBarButtonSystemItem.h"
 
 @implementation RCCNavigationController
 {
   BOOL _transitioning;
-  NSMutableArray *_queuedViewControllers;
+  BOOL _rendering;
+  NSDictionary *_queuedViewController;
 }
 
 NSString const *CALLBACK_ASSOCIATED_KEY = @"RCCNavigationController.CALLBACK_ASSOCIATED_KEY";
@@ -31,7 +27,7 @@ NSString const *CALLBACK_ASSOCIATED_ID = @"RCCNavigationController.CALLBACK_ASSO
 
 - (instancetype)initWithProps:(NSDictionary *)props children:(NSArray *)children globalProps:(NSDictionary*)globalProps bridge:(RCTBridge *)bridge
 {
-  _queuedViewControllers = [NSMutableArray new];
+  _queuedViewController = nil;
   
   NSString *component = props[@"component"];
   if (!component) return nil;
@@ -41,7 +37,7 @@ NSString const *CALLBACK_ASSOCIATED_ID = @"RCCNavigationController.CALLBACK_ASSO
   
   RCCViewController *viewController = [[RCCViewController alloc] initWithComponent:component passProps:passProps navigatorStyle:navigatorStyle globalProps:globalProps bridge:bridge];
   if (!viewController) return nil;
-  viewController.controllerId = passProps[@"screenInstanceID"];
+  viewController.controllerId = props[@"id"];
   
   NSArray *leftButtons = props[@"leftButtons"];
   if (leftButtons)
@@ -67,15 +63,36 @@ NSString const *CALLBACK_ASSOCIATED_ID = @"RCCNavigationController.CALLBACK_ASSO
   
 
   [self setRotation:props];
-  
+    
+  [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(contentDidAppear:) name:RCTContentDidAppearNotification object:nil];
+
   return self;
 }
 
+- (void)contentDidAppear:(NSNotification *)note{
+  NSLog(@"contentDidAppear, transitioning: %@ rendering: %@", @(_transitioning), @(_rendering));
+
+  dispatch_async(dispatch_get_main_queue(), ^{
+    _rendering = NO;
+    if (_queuedViewController != nil) {
+      if (![[_queuedViewController[@"viewController"] view] isEqual: note.object]) {
+        return;
+      }
+      
+      RCCViewController* vc = _queuedViewController[@"viewController"];
+      BOOL animated = [_queuedViewController[@"animated"] boolValue];
+    
+      _transitioning = NO;
+      
+      [self pushViewController:vc animated:animated];
+    }
+  });
+}
 
 - (void)performAction:(NSString*)performAction actionParams:(NSDictionary*)actionParams bridge:(RCTBridge *)bridge
 {
   BOOL animated = actionParams[@"animated"] ? [actionParams[@"animated"] boolValue] : YES;
-  
+
   // push
   if ([performAction isEqualToString:@"push"])
   {
@@ -127,12 +144,6 @@ NSString const *CALLBACK_ASSOCIATED_ID = @"RCCNavigationController.CALLBACK_ASSO
                      style:navigatorStyle];
     
     NSString *backButtonTitle = actionParams[@"backButtonTitle"];
-    if (!backButtonTitle) {
-      NSNumber *hideBackButtonTitle = [[RCCManager sharedInstance] getAppStyle][@"hideBackButtonTitle"];
-      BOOL hideBackButtonTitleBool = hideBackButtonTitle ? [hideBackButtonTitle boolValue] : NO;
-      backButtonTitle = hideBackButtonTitleBool ? @"" : backButtonTitle;
-    }
-    
     if (backButtonTitle)
     {
       UIBarButtonItem *backItem = [[UIBarButtonItem alloc] initWithTitle:backButtonTitle
@@ -164,35 +175,6 @@ NSString const *CALLBACK_ASSOCIATED_ID = @"RCCNavigationController.CALLBACK_ASSO
     if (rightButtons)
     {
       [self setButtons:rightButtons viewController:viewController side:@"right" animated:NO];
-    }
-
-    NSArray *previewActions = actionParams[@"previewActions"];
-    NSString *previewViewID = actionParams[@"previewViewID"];
-    if (previewViewID) {
-      if ([self.topViewController isKindOfClass:[RCCViewController class]])
-      {
-        RCCViewController *topViewController = ((RCCViewController*)self.topViewController);
-        topViewController.previewController = nil;
-        [topViewController.navigationController unregisterForPreviewingWithContext:topViewController.previewContext];
-        viewController.previewActions = previewActions;
-        viewController.previewCommit = actionParams[@"previewCommit"] ? [actionParams[@"previewCommit"] boolValue] : YES;
-        NSNumber *previewHeight = actionParams[@"previewHeight"];
-        if (previewHeight) {
-          viewController.preferredContentSize = CGSizeMake(viewController.view.frame.size.width, [previewHeight floatValue]);
-        }
-        if (topViewController.traitCollection.forceTouchCapability == UIForceTouchCapabilityAvailable)
-        {
-          dispatch_async(RCTGetUIManagerQueue(), ^{
-            [bridge.uiManager addUIBlock:^(__unused RCTUIManager *uiManager, NSDictionary<NSNumber *, UIView *> *viewRegistry) {
-              UIView *view = viewRegistry[previewViewID];
-              topViewController.previewView = view;
-              topViewController.previewContext = [topViewController registerForPreviewingWithDelegate:(id)topViewController sourceView:view];
-            }];
-          });
-          topViewController.previewController = viewController;
-        }
-        return;
-      }
     }
     
     NSString *animationType = actionParams[@"animationType"];
@@ -259,7 +241,7 @@ NSString const *CALLBACK_ASSOCIATED_ID = @"RCCNavigationController.CALLBACK_ASSO
     if (!component) return;
     
     NSMutableDictionary *passProps = [actionParams[@"passProps"] mutableCopy];
-    passProps[@"commandType"] = @"resetTo";
+    passProps[@"commantType"] = @"resetTo";
     NSDictionary *navigatorStyle = actionParams[@"style"];
     
     RCCViewController *viewController = [[RCCViewController alloc] initWithComponent:component passProps:passProps navigatorStyle:navigatorStyle globalProps:nil bridge:bridge];
@@ -382,8 +364,6 @@ NSString const *CALLBACK_ASSOCIATED_ID = @"RCCNavigationController.CALLBACK_ASSO
     id icon = button[@"icon"];
     if (icon) iconImage = [RCTConvert UIImage:icon];
     NSString *__nullable component = button[@"component"];
-    NSString *__nullable systemItemName = button[@"systemItem"];
-    UIBarButtonSystemItem systemItem = [RCTConvert UIBarButtonSystemItem:systemItemName];
 
     UIBarButtonItem *barButtonItem;
     if (iconImage)
@@ -397,15 +377,11 @@ NSString const *CALLBACK_ASSOCIATED_ID = @"RCCNavigationController.CALLBACK_ASSO
       NSMutableDictionary *buttonTextAttributes = [RCTHelpers textAttributesFromDictionary:button withPrefix:@"button"];
       if (buttonTextAttributes.allKeys.count > 0) {
         [barButtonItem setTitleTextAttributes:buttonTextAttributes forState:UIControlStateNormal];
-        [barButtonItem setTitleTextAttributes:buttonTextAttributes forState:UIControlStateHighlighted];
       }
     }
     else if (component) {
       RCTBridge *bridge = [[RCCManager sharedInstance] getBridge];
       barButtonItem = [[RCCCustomBarButtonItem alloc] initWithComponentName:component passProps:button[@"passProps"] bridge:bridge];
-    }
-    else if (systemItemName) {
-      barButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:systemItem target:self action:@selector(onButtonPress:)];
     }
     else continue;
     objc_setAssociatedObject(barButtonItem, &CALLBACK_ASSOCIATED_KEY, button[@"onPress"], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -427,16 +403,6 @@ NSString const *CALLBACK_ASSOCIATED_ID = @"RCCNavigationController.CALLBACK_ASSO
     BOOL disableIconTint = disableIconTintString ? [disableIconTintString boolValue] : NO;
     if (disableIconTint) {
       [barButtonItem setImage:[barButtonItem.image imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal]];
-    }
-    
-    if ([viewController isKindOfClass:[RCCViewController class]]) {
-      RCCViewController *rccViewController = ((RCCViewController*)viewController);
-      NSDictionary *navigatorStyle = rccViewController.navigatorStyle;
-      id disabledButtonColor = navigatorStyle[@"disabledButtonColor"];
-      if (disabledButtonColor) {
-        UIColor *color = [RCTConvert UIColor:disabledButtonColor];
-        [barButtonItem setTitleTextAttributes:@{NSForegroundColorAttributeName : color} forState:UIControlStateDisabled];
-      }
     }
     
     NSString *testID = button[@"testID"];
@@ -480,16 +446,28 @@ NSString const *CALLBACK_ASSOCIATED_ID = @"RCCNavigationController.CALLBACK_ASSO
 
 - (void)pushViewController:(UIViewController *)viewController animated:(BOOL)animated
 {
-  if(_transitioning)
-  {
-    NSDictionary *pushDetails =@{ @"viewController": viewController, @"animated": @(animated) };
-    [_queuedViewControllers addObject:pushDetails];
-    
+  NSLog(@"Attempting, transitioning: %@ rendering: %@", @(_transitioning), @(_rendering));
+  
+  // Do not attempt to block rendering if this is the first
+  // view controller. Not having a _queuedViewController signals
+  // we should block the navigation push until React Native
+  // has completed its rendering on the root view.
+  if([self.viewControllers count] > 0 && _queuedViewController == nil) {
+    _rendering = YES;
+    _transitioning = NO;
+    _queuedViewController = @{ @"viewController": viewController, @"animated": @(animated) };
+    NSLog(@"Queued, transitioning: %@ rendering: %@", @(_transitioning), @(_rendering));
+  }
+  
+  // Guard against a transition or render if already in process
+  if(_transitioning || _rendering) {
+    NSLog(@"Blocked, transitioning: %@ rendering: %@", @(_transitioning), @(_rendering));
     return;
   }
   
   _transitioning = YES;
-  
+  _queuedViewController = nil;
+  NSLog(@"Pushing, transitioning: %@ rendering: %@", @(_transitioning), @(_rendering));
   [super pushViewController:viewController animated:animated];
 }
 
@@ -503,12 +481,15 @@ NSString const *CALLBACK_ASSOCIATED_ID = @"RCCNavigationController.CALLBACK_ASSO
 
 - (void)navigationController:(UINavigationController *)navigationController didShowViewController:(UIViewController *)viewController animated:(BOOL)animated
 {
+  NSLog(@"didShowViewController, transitioning: %@ rendering: %@", @(_transitioning), @(_rendering));
+
   dispatch_async(dispatch_get_main_queue(), ^{
     _transitioning = NO;
-    if ([_queuedViewControllers count] > 0) {
-      NSDictionary *toPushDetails = [_queuedViewControllers firstObject];
-      [_queuedViewControllers removeObjectAtIndex:0];
-      [self pushViewController:toPushDetails[@"viewController"] animated:[toPushDetails[@"animated"] boolValue]];
+    if (_queuedViewController != nil) {
+      RCCViewController* vc = _queuedViewController[@"viewController"];
+      BOOL animated = [_queuedViewController[@"animated"] boolValue];
+      
+      [self pushViewController:vc animated:animated];
     }
   });
 }
