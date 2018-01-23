@@ -283,14 +283,14 @@ public class BottomTabsLayout extends BaseLayout implements AHBottomNavigation.O
     }
 
     @Override
-    public void showLightBox(LightBoxParams params) {
+    public void showLightBox(LightBoxParams params, Screen currentActiveScreen) {
         if (lightBox == null) {
             lightBox = new LightBox(getActivity(), new Runnable() {
                 @Override
                 public void run() {
                     lightBox = null;
                 }
-            }, params);
+            }, params, currentActiveScreen);
             lightBox.show();
         }
     }

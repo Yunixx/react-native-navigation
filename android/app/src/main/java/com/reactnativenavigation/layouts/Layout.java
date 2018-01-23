@@ -59,7 +59,7 @@ public interface Layout extends ScreenStackContainer {
 
     void dismissSnackbar();
 
-    void showLightBox(LightBoxParams params);
+    void showLightBox(LightBoxParams params, Screen currentActiveScreen);
 
     void dismissLightBox();
 

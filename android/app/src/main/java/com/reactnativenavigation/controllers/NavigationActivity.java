@@ -282,7 +282,9 @@ public class NavigationActivity extends AppCompatActivity implements DefaultHard
     }
 
     public void showLightBox(LightBoxParams params) {
-        layout.showLightBox(params);
+        Screen previewScreen = layout.getCurrentScreen();
+
+        layout.showLightBox(params, previewScreen);
     }
 
     public void dismissLightBox() {
