@@ -27,6 +27,7 @@ import android.util.Log;
 
 import com.reactnativenavigation.R;
 import com.reactnativenavigation.params.LightBoxParams;
+import com.reactnativenavigation.utils.NavigationBar;
 import com.reactnativenavigation.screens.Screen;
 import com.reactnativenavigation.utils.ViewUtils;
 
@@ -55,9 +56,13 @@ public class LightBox extends Dialog implements DialogInterface.OnDismissListene
         getWindow().setWindowAnimations(android.R.style.Animation);
         getWindow().setSoftInputMode(params.adjustSoftInput);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
             getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
-        }
+		}
+		getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+		getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
+					WindowManager.LayoutParams.FLAG_FULLSCREEN);
+
+		getWindow().setNavigationBarColor(Color.BLACK);
 	}
 
     private void createContent(final Context context, LightBoxParams params) {
